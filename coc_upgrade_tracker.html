@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>COC 升级时间解析（工人 / 实验室分板块）</title>
+    <style>
+        body {
+            background: #121921;
+            color: #e2e8f0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+        .container {
+            width: 100%;
+            max-width: 640px;
+        }
+        h2 {
+            color: #f5c76a;
+            margin: 25px 0 10px;
+            font-size: 1.25rem;
+        }
+        h2 .count {
+            font-size: 0.85rem;
+            color: #94a3b8;
+            font-weight: 400;
+            margin-left: 8px;
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        textarea {
+            width: 100%;
+            height: 140px;
+            background: #1c252f;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            color: #e2e8f0;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            resize: vertical;
+            margin-bottom: 8px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            width: 100%;
+            font-weight: 600;
+        }
+        button:hover {
+            background: #2563eb;
+        }
+        .status {
+            margin-bottom: 15px;
+            color: #94a3b8;
+            font-size: 0.9rem;
+        }
+        .list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .item {
+            background: #1e293b;
+            border-radius: 10px;
+            padding: 14px 16px;
+            border: 1px solid #334155;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .item-left {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .item-name {
+            font-weight: 600;
+            font-size: 1rem;
+            color: #f8fafc;
+        }
+        .item-level {
+            font-size: 0.8rem;
+            color: #94a3b8;
+        }
+        .item-level span {
+            color: #4ade80;
+        }
+        .item-right {
+            text-align: right;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .time-remaining {
+            font-weight: 700;
+            color: #f5c76a;
+            font-size: 1.1rem;
+        }
+        .time-finish {
+            font-size: 0.75rem;
+            color: #94a3b8;
+        }
+        .badge {
+            display: inline-block;
+            font-size: 0.68rem;
+            padding: 1px 7px;
+            border-radius: 6px;
+            margin-left: 6px;
+            vertical-align: 1px;
+            font-weight: 600;
+        }
+        .badge-bb {
+            background: #1e3a5f;
+            color: #7dd3fc;
+        }
+        .badge-helper {
+            background: #3f2d12;
+            color: #fbbf24;
+        }
+        .empty {
+            text-align: center;
+            color: #64748b;
+            padding: 30px 0;
+            border: 1px dashed #334155;
+            border-radius: 10px;
+            font-size: 0.9rem;
+        }
+        .note {
+            margin-top: 25px;
+            color: #64748b;
+            font-size: 0.75rem;
+            line-height: 1.6;
+            border-top: 1px solid #1e293b;
+            padding-top: 12px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>📦 村庄导出 JSON 解析</h2>
+    <div class="input-group">
+        <textarea id="jsonInput" placeholder="粘贴 COC 导出 JSON (包含 timer 字段的内容)"></textarea>
+        <button id="parseBtn">解析 JSON</button>
+    </div>
+    <div class="status" id="statusMsg">等待输入...</div>
+
+    <h2>⚒️ 工人升级中 <span class="count" id="workerCount"></span></h2>
+    <div class="list" id="workerList">
+        <div class="empty">暂无工人升级项目</div>
+    </div>
+
+    <h2>🧪 实验室研究 <span class="count" id="labCount"></span></h2>
+    <div class="list" id="labList">
+        <div class="empty">暂无实验室研究项目</div>
+    </div>
+
+    <div class="note">
+        名称映射依据官方游戏数据 (buildings / characters / heroes / pets / spells CSV 的类型序号 + texts.csv 官方中文译名)。
+        2024 年后新增、暂无公开数据对照的 ID 会显示为「类型 #ID」，如名称有误请按 ID 告知即可补正。
+        蓝色「夜世界」标记 = 建筑大师基地项目；黄色「帮手」标记 = 帮手周期性升级 (helper_recurrent)。
+    </div>
+</div>
+
+<script>
+    // ===== ID → 名称映射 =====
+    // 规律（已用导出 JSON 锚点逐项验证）：类型 ID = 区段基数 + CSV 类型序号
+    // （CSV 首行 "String" 不占 ID，第一个真实类型 = 基数 + 0）
+    // 建筑基数 1000000 / 兵种 4000000 / 法术 26000000 / 英雄 28000000 / 宠物 73000000
+    const NAME_MAP = {
+        // 建筑（主世界 + 夜世界，对应官方 buildings.csv）
+        1000000: '兵营',
+        1000001: '大本营',
+        1000002: '圣水收集器',
+        1000003: '圣水瓶',
+        1000004: '金矿',
+        1000005: '储金罐',
+        1000006: '训练营',
+        1000007: '实验室',
+        1000008: '加农炮',
+        1000009: '箭塔',
+        1000010: '城墙',
+        1000011: '法师塔',
+        1000012: '防空火箭',
+        1000013: '迫击炮',
+        1000014: '部落城堡',
+        1000015: '建筑工人小屋',
+        1000016: '无线电塔',
+        1000019: '特斯拉电磁塔',
+        1000020: '法术工厂',
+        1000021: 'X连弩',
+        1000022: '野蛮人之王祭坛',
+        1000023: '暗黑重油钻井',
+        1000024: '暗黑重油罐',
+        1000025: '弓箭女皇祭坛',
+        1000026: '暗黑训练营',
+        1000027: '地狱之塔',
+        1000028: '空气炮',
+        1000029: '暗黑法术工厂',
+        1000030: '大守护者祭坛',
+        1000031: '天鹰火炮',
+        1000032: '炸弹塔',
+        1000033: '城墙',
+        1000034: '建筑大师大本营',
+        1000035: '圣水收集器',
+        1000036: '圣水瓶',
+        1000037: '金矿',
+        1000038: '储金罐',
+        1000039: '时光钟楼',
+        1000040: '建筑大师训练营',
+        1000041: '双管加农炮',
+        1000042: '兵营',
+        1000043: '特斯拉电磁塔',
+        1000044: '加农炮',
+        1000045: '多管迫击炮',
+        1000046: '星空实验室',
+        1000047: '建筑大师小屋',
+        1000048: '箭塔',
+        1000049: '增援营地',
+        1000050: '防空火炮',
+        1000051: '守卫岗哨',
+        1000052: '超级特斯拉电磁塔',
+        1000053: '战争机器祭坛',
+        1000054: '空中炸弹发射器',
+        1000055: '撼地巨石',
+        1000056: '熔岩火炮',
+        1000057: '巨型加农炮',
+        1000058: '宝石矿井',
+        1000059: '攻城机器工坊',
+        1000060: '加农炮',
+        1000061: '哥布林城堡',
+        1000062: '不祥洞窟',
+        1000063: '熔岩发射器',
+        1000064: 'B.O.B小屋',
+        1000066: '飞盾战神祭坛',
+        1000067: '投石炮',
+        1000068: '战宠小屋',
+        1000070: '铁匠铺',
+        1000072: '法术塔',
+        1000077: '黑曜石碑',
+        1000080: '战争直升机祭坛',
+        1000081: '夜世界连弩',
+
+        // 英雄（heroes.csv：野蛮人之王 28000000 起）
+        28000000: '野蛮人之王',
+        28000001: '弓箭女皇',
+        28000002: '大守护者',
+        28000003: '战争机器',
+        28000004: '飞盾战神',
+        28000005: '战争直升机',
+        // 28000006：2024 后新增的第 5 个主世界英雄，无公开数据 → 显示 英雄 #ID
+
+        // 宠物（pets.csv，TID_PET_SPIRIT_FOX = 灵狐已与导出 JSON 核对）
+        73000000: '莱希',
+        73000001: '大牦',
+        73000002: '闪枭',
+        73000003: '独角',
+        73000004: '凤凰',
+        73000007: '毒蜥',
+        73000008: '地兽',
+        73000009: '冰牙',
+        73000010: '灵狐',
+
+        // 法术（spells.csv，含 SC 历史 TID 怪癖：TID_HASTE=狂暴、TID_SPEEDUP=急速）
+        26000000: '雷电法术',
+        26000001: '疗伤法术',
+        26000002: '狂暴法术',
+        26000003: '弹跳法术',
+        26000005: '冰冻法术',
+        26000009: '毒药法术',
+        26000010: '地震法术',
+        26000011: '急速法术',
+        26000016: '镜像法术',
+        26000017: '骷髅法术',
+        26000028: '蝙蝠法术',
+        26000035: '隐形法术',
+        26000053: '召回法术',
+        26000070: '蔓生法术',
+        26000072: '冰霜法术',
+
+        // 兵种（characters.csv，主世界 + 夜世界 + 攻城机器 + 超级兵种）
+        4000000: '野蛮人',
+        4000001: '弓箭手',
+        4000002: '哥布林',
+        4000003: '巨人',
+        4000004: '炸弹人',
+        4000005: '气球兵',
+        4000006: '法师',
+        4000007: '天使',
+        4000008: '飞龙',
+        4000009: '皮卡超人',
+        4000010: '亡灵',
+        4000011: '野猪骑士',
+        4000012: '瓦基丽武神',
+        4000013: '戈仑石人',
+        4000015: '女巫',
+        4000017: '熔岩猎犬',
+        4000022: '巨石投手',
+        4000023: '飞龙宝宝',
+        4000024: '掘地矿工',
+        4000026: '超级野蛮人',
+        4000027: '超级弓箭手',
+        4000028: '超级炸弹人',
+        4000029: '超级巨人',
+        4000030: '寒冰法师',
+        4000031: '狂暴野蛮人',
+        4000032: '隐秘弓箭手',
+        4000033: '异变亡灵',
+        4000034: '巨人拳击手',
+        4000035: '炸弹兵',
+        4000036: '超级皮卡',
+        4000037: '加农炮战车',
+        4000038: '骷髅气球',
+        4000042: '暗夜女巫',
+        4000045: '野蛮人攻城槌',
+        4000047: '皇家幽灵',
+        4000050: '骷髅巨人',
+        4000051: '攻城战车',
+        4000052: '攻城飞艇',
+        4000053: '大雪怪',
+        4000054: '小雪怪',
+        4000055: '超级哥布林',
+        4000056: '超级矿工',
+        4000057: '火箭气球兵',
+        4000058: '戈仑冰人',
+        4000059: '雷电飞龙',
+        4000061: '骷髅飞桶',
+        4000062: '攻城气球',
+        4000063: '地狱飞龙',
+        4000064: '超级瓦基丽武神',
+        4000065: '龙骑士',
+        4000066: '超级女巫',
+        4000067: '艾尔·普里莫',
+        4000070: '野猪飞骑',
+        4000072: '派对法师',
+        4000075: '攻城训练营',
+        4000076: '寒冰猎犬',
+        4000080: '超级巨石投手',
+        4000081: '超级飞龙',
+        4000082: '英雄猎手',
+        4000083: '超级法师',
+        4000084: '超级亡灵',
+        4000085: '迷你寒冰犬',
+        4000087: '攻城滚木车',
+        4000091: '攻城投石机',
+        4000092: 'Battle Drill',
+        4000095: '雷电泰坦',
+        4000098: '超级野猪骑士',
+        4000110: '根须骑士',
+    };
+
+    // ===== 工具函数 =====
+
+    // 格式化秒数为 "X天Y小时Z分"
+    function formatTime(seconds) {
+        if (!seconds || seconds <= 0) return '0秒';
+        const days = Math.floor(seconds / 86400);
+        const hours = Math.floor((seconds % 86400) / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        let res = '';
+        if (days > 0) res += `${days}天`;
+        if (hours > 0) res += `${hours}小时`;
+        if (mins > 0 || res === '') res += `${mins}分`;
+        return res;
+    }
+
+    // 计算完成日期（今天/明天/具体日期）
+    function getFinishDate(seconds) {
+        const now = new Date();
+        const finish = new Date(now.getTime() + seconds * 1000);
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const finishDay = new Date(finish.getFullYear(), finish.getMonth(), finish.getDate());
+
+        const diffDays = Math.round((finishDay - today) / (1000 * 60 * 60 * 24));
+
+        const timeStr = `${String(finish.getHours()).padStart(2, '0')}:${String(finish.getMinutes()).padStart(2, '0')}`;
+
+        if (diffDays === 0) return `今天 ${timeStr}`;
+        if (diffDays === 1) return `明天 ${timeStr}`;
+        if (diffDays === 2) return `后天 ${timeStr}`;
+        return `${finish.getMonth() + 1}-${String(finish.getDate()).padStart(2, '0')} ${timeStr}`;
+    }
+
+    // 名称查找：未收录的 ID 显示 "类型 #ID"，方便对照纠正
+    function getItemName(id) {
+        if (NAME_MAP[id]) return NAME_MAP[id];
+        if (id >= 1000000 && id < 2000000) return `建筑 #${id}`;
+        if (id >= 28000000 && id < 29000000) return `英雄 #${id}`;
+        if (id >= 73000000 && id < 74000000) return `宠物 #${id}`;
+        if (id >= 26000000 && id < 27000000) return `法术 #${id}`;
+        if (id >= 4000000 && id < 5000000) return `兵种 #${id}`;
+        return `未知 #${id}`;
+    }
+
+    function esc(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ===== 解析主流程 =====
+
+    // 工人板块：buildings / buildings2 / heroes / heroes2 / pets
+    // 实验室板块：units / units2 / spells
+    const SOURCES = [
+        // [字段名, 板块, 是否夜世界]
+        ['buildings', 'worker', false],
+        ['buildings2', 'worker', true],
+        ['heroes', 'worker', false],
+        ['heroes2', 'worker', true],
+        ['pets', 'worker', false],
+        ['units', 'lab', false],
+        ['units2', 'lab', true],
+        ['spells', 'lab', false]
+    ];
+
+    function parseJSON() {
+        const input = document.getElementById('jsonInput').value.trim();
+        const statusMsg = document.getElementById('statusMsg');
+
+        if (!input) {
+            statusMsg.textContent = '请先粘贴 JSON 数据';
+            return;
+        }
+
+        let data;
+        try {
+            data = JSON.parse(input);
+        } catch (e) {
+            statusMsg.textContent = 'JSON 解析错误: ' + e.message;
+            return;
+        }
+
+        const workerItems = [];
+        const labItems = [];
+
+        SOURCES.forEach(([field, section, isBB]) => {
+            const arr = data[field];
+            if (!Array.isArray(arr)) return;
+            arr.forEach(item => {
+                if (item && item.timer && item.timer > 0) {
+                    (section === 'worker' ? workerItems : labItems).push({
+                        id: item.data,
+                        lvl: item.lvl,
+                        timer: item.timer,
+                        isBB: isBB,
+                        helper: !!item.helper_recurrent
+                    });
+                }
+            });
+        });
+
+        const total = workerItems.length + labItems.length;
+        if (total === 0) {
+            statusMsg.textContent = '未找到正在升级的项目 (timer 字段)';
+        } else {
+            statusMsg.textContent = `共找到 ${total} 个进行中的项目：工人 ${workerItems.length} 个，实验室 ${labItems.length} 个`;
+        }
+
+        // 各板块按剩余时间升序
+        workerItems.sort((a, b) => a.timer - b.timer);
+        labItems.sort((a, b) => a.timer - b.timer);
+
+        renderSection('workerList', 'workerCount', workerItems, '暂无工人升级项目');
+        renderSection('labList', 'labCount', labItems, '暂无实验室研究项目');
+    }
+
+    function renderSection(listId, countId, items, emptyText) {
+        const listContainer = document.getElementById(listId);
+        const countEl = document.getElementById(countId);
+        countEl.textContent = items.length ? `(${items.length})` : '';
+
+        if (!items.length) {
+            listContainer.innerHTML = `<div class="empty">${emptyText}</div>`;
+            return;
+        }
+
+        listContainer.innerHTML = items.map(item => {
+            const name = esc(getItemName(item.id));
+            const remainStr = formatTime(item.timer);
+            const finishStr = getFinishDate(item.timer);
+            const from = (item.lvl && item.lvl > 1) ? item.lvl - 1 : 0;
+            const lvlStr = item.lvl != null
+                ? `Lv.${from} <span>→ Lv.${item.lvl}</span>`
+                : '';
+
+            const badges =
+                (item.isBB ? '<span class="badge badge-bb">夜世界</span>' : '') +
+                (item.helper ? '<span class="badge badge-helper">帮手</span>' : '');
+
+            return `
+                <div class="item">
+                    <div class="item-left">
+                        <div class="item-name">${name}${badges}</div>
+                        <div class="item-level">${lvlStr}</div>
+                    </div>
+                    <div class="item-right">
+                        <div class="time-remaining">${remainStr}</div>
+                        <div class="time-finish">${finishStr}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    document.getElementById('parseBtn').addEventListener('click', parseJSON);
+</script>
+</body>
+</html>
