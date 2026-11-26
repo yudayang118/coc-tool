@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>COC 升级时间解析（工人 / 实验室分板块）</title>
     <style>
         body {
@@ -12,6 +12,7 @@
             padding: 20px;
             display: flex;
             justify-content: center;
+            touch-action: manipulation;
         }
         .container {
             width: 100%;
@@ -49,15 +50,26 @@
             background: #3b82f6;
             color: white;
             border: none;
-            padding: 10px 20px;
+            padding: 10px 12px;
             border-radius: 8px;
             font-size: 1rem;
             cursor: pointer;
-            width: 100%;
             font-weight: 600;
+            flex: 1;
+            touch-action: manipulation;
         }
         button:hover {
             background: #2563eb;
+        }
+        button.secondary {
+            background: #334155;
+        }
+        button.secondary:hover {
+            background: #475569;
+        }
+        .btn-row {
+            display: flex;
+            gap: 8px;
         }
         .status {
             margin-bottom: 15px;
@@ -110,6 +122,15 @@
             font-size: 0.75rem;
             color: #94a3b8;
         }
+        .time-accelerated {
+            font-size: 0.78rem;
+            color: #4ade80;
+            font-weight: 600;
+        }
+        .badge-boost {
+            background: #14532d;
+            color: #4ade80;
+        }
         .badge {
             display: inline-block;
             font-size: 0.68rem;
@@ -150,7 +171,11 @@
     <h2>📦 村庄导出 JSON 解析</h2>
     <div class="input-group">
         <textarea id="jsonInput" placeholder="粘贴 COC 导出 JSON (包含 timer 字段的内容)"></textarea>
-        <button id="parseBtn">解析 JSON</button>
+        <div class="btn-row">
+            <button id="parseBtn">解析</button>
+            <button id="clipboardBtn" class="secondary">📋 剪贴板</button>
+            <button id="clearBtn" class="secondary">🗑️ 清空</button>
+        </div>
     </div>
     <div class="status" id="statusMsg">等待输入...</div>
 
@@ -164,10 +189,17 @@
         <div class="empty">暂无实验室研究项目</div>
     </div>
 
+    <h2>⏳ 药水加速 <span class="count" id="boostCount"></span></h2>
+    <div class="list" id="boostList">
+        <div class="empty">暂无药水生效</div>
+    </div>
+
     <div class="note">
         名称映射依据官方游戏数据 (buildings / characters / heroes / pets / spells CSV 的类型序号 + texts.csv 官方中文译名)。
         2024 年后新增、暂无公开数据对照的 ID 会显示为「类型 #ID」，如名称有误请按 ID 告知即可补正。
         蓝色「夜世界」标记 = 建筑大师基地项目；黄色「帮手」标记 = 帮手周期性升级 (helper_recurrent)。
+        药水加速：工人药水 ×10、研究药水 ×24、战宠药水 ×24（官方 globals.csv 倍率），受影响项目会显示绿色 ⚡ 加速后倒计时；
+        药水 ID 目前按官方 boosters.csv 序号推定，若显示「药水 #ID」请把实际 JSON 发我核对修正。
     </div>
 </div>
 
@@ -405,21 +437,73 @@
         return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
+    // ===== 药水（boosts）=====
+
+    // 药水 ID 映射：boosters.csv 类型序号（基数 86000000，为常见导出格式推定值）
+    // 倍率来自官方 globals.csv：
+    //   BOOSTER_BUILDERS_SPEEDUP=10 / BOOSTER_LABORATORY_SPEEDUP=24 / BOOSTER_PET_SHOP_SPEEDUP=24
+    // scope: builder=加速工人板块(主世界) / lab=加速实验室(主世界) / pet=加速宠物 / none=仅展示
+    const BOOST_MAP = {
+        86000005: { name: '力量药水', scope: 'none', mult: 0 },
+        86000006: { name: '资源药水', scope: 'none', mult: 0 },
+        86000007: { name: '训练药水', scope: 'none', mult: 0 },
+        86000014: { name: '工人药水', scope: 'builder', mult: 10 },
+        86000019: { name: '时钟药水', scope: 'none', mult: 0 },
+        86000021: { name: '英雄药水', scope: 'none', mult: 0 },
+        86000022: { name: '研究药水', scope: 'lab', mult: 24 },
+        86000023: { name: '超级兵药水', scope: 'none', mult: 0 },
+        86000024: { name: '战宠药水', scope: 'pet', mult: 24 },
+    };
+
+    // 采集生效中的药水；兼容 data/id 字段名与 timer/time 字段名
+    // 返回：{ secs: {builder:累计秒,lab:累计秒,pet:累计秒}, display: [{id,name,timer}] }
+    function collectBoosts(data) {
+        const secs = { builder: 0, lab: 0, pet: 0 };
+        const display = [];
+        const arr = data && data.boosts;
+        if (!Array.isArray(arr)) return { secs, display };
+        arr.forEach(b => {
+            if (!b) return;
+            const id = b.data != null ? b.data : (b.id != null ? b.id : b.type);
+            if (id == null) return;
+            const t = Number(b.timer != null ? b.timer : (b.time != null ? b.time : 0)) || 0;
+            const info = BOOST_MAP[id];
+            if (info) {
+                if (info.scope !== 'none' && t > 0) secs[info.scope] += t;
+                display.push({ id: id, name: info.name, timer: t, mult: info.mult, scope: info.scope });
+            } else {
+                display.push({ id: id, name: `药水 #${id}`, timer: t, mult: 0, scope: 'none' });
+            }
+        });
+        return { secs, display };
+    }
+
+    // 加速换算：原始剩余 R、倍率 M、药水剩余 D
+    //   药水期内能干完 → R/M；否则先吃满药水时长再按原速走剩余
+    function acceleratedRemain(R, M, D) {
+        if (M * D >= R) return R / M;
+        return D + (R - M * D);
+    }
+
     // ===== 解析主流程 =====
 
     // 工人板块：buildings / buildings2 / heroes / heroes2 / pets
     // 实验室板块：units / units2 / spells
+    // 第 4 列为药水作用范围：builder=工人药水 / lab=研究药水 / pet=战宠药水 / none=不受这三种药水影响
     const SOURCES = [
-        // [字段名, 板块, 是否夜世界]
-        ['buildings', 'worker', false],
-        ['buildings2', 'worker', true],
-        ['heroes', 'worker', false],
-        ['heroes2', 'worker', true],
-        ['pets', 'worker', false],
-        ['units', 'lab', false],
-        ['units2', 'lab', true],
-        ['spells', 'lab', false]
+        // [字段名, 板块, 是否夜世界, 药水范围]
+        ['buildings', 'worker', false, 'builder'],
+        ['buildings2', 'worker', true, 'none'],
+        ['heroes', 'worker', false, 'builder'],
+        ['heroes2', 'worker', true, 'none'],
+        ['pets', 'worker', false, 'pet'],
+        ['units', 'lab', false, 'lab'],
+        ['units2', 'lab', true, 'none'],
+        ['spells', 'lab', false, 'lab']
     ];
+
+    // 各范围的药水倍率（与 BOOST_MAP 保持一致）
+    const SCOPE_MULT = { builder: 10, lab: 24, pet: 24 };
 
     function parseJSON() {
         const input = document.getElementById('jsonInput').value.trim();
@@ -441,7 +525,7 @@
         const workerItems = [];
         const labItems = [];
 
-        SOURCES.forEach(([field, section, isBB]) => {
+        SOURCES.forEach(([field, section, isBB, scope]) => {
             const arr = data[field];
             if (!Array.isArray(arr)) return;
             arr.forEach(item => {
@@ -451,25 +535,80 @@
                         lvl: item.lvl,
                         timer: item.timer,
                         isBB: isBB,
-                        helper: !!item.helper_recurrent
+                        helper: !!item.helper_recurrent,
+                        scope: scope
                     });
                 }
             });
         });
 
+        // 药水：采集生效中的药水，并对受影响项目计算加速后剩余时间
+        const boosts = collectBoosts(data);
+        const potionNameByScope = {};
+        boosts.display.forEach(d => {
+            if (d.scope !== 'none' && d.timer > 0) potionNameByScope[d.scope] = d.name;
+        });
+        [workerItems, labItems].forEach(list => {
+            list.forEach(item => {
+                const potionSecs = boosts.secs[item.scope] || 0;
+                if (potionSecs > 0 && SCOPE_MULT[item.scope]) {
+                    item.boostName = potionNameByScope[item.scope] || '药水';
+                    item.accTimer = acceleratedRemain(item.timer, SCOPE_MULT[item.scope], potionSecs);
+                }
+            });
+        });
+
         const total = workerItems.length + labItems.length;
-        if (total === 0) {
+        let potionSummary = '';
+        if (boosts.display.length) {
+            potionSummary = '；生效药水：' + boosts.display
+                .filter(d => d.timer > 0)
+                .map(d => `${d.name}×${d.mult || '-'} 剩${formatTime(d.timer)}`)
+                .join('，');
+        }
+        if (total === 0 && !potionSummary) {
             statusMsg.textContent = '未找到正在升级的项目 (timer 字段)';
+        } else if (total === 0) {
+            statusMsg.textContent = '未找到正在升级的项目' + potionSummary;
         } else {
-            statusMsg.textContent = `共找到 ${total} 个进行中的项目：工人 ${workerItems.length} 个，实验室 ${labItems.length} 个`;
+            statusMsg.textContent = `共找到 ${total} 个进行中的项目：工人 ${workerItems.length} 个，实验室 ${labItems.length} 个` + potionSummary;
         }
 
-        // 各板块按剩余时间升序
-        workerItems.sort((a, b) => a.timer - b.timer);
-        labItems.sort((a, b) => a.timer - b.timer);
+        // 各板块按（加速后）剩余时间升序
+        workerItems.sort((a, b) => (a.accTimer || a.timer) - (b.accTimer || b.timer));
+        labItems.sort((a, b) => (a.accTimer || a.timer) - (b.accTimer || b.timer));
 
         renderSection('workerList', 'workerCount', workerItems, '暂无工人升级项目');
         renderSection('labList', 'labCount', labItems, '暂无实验室研究项目');
+        renderBoosts(boosts.display);
+    }
+
+    // 药水板块
+    function renderBoosts(display) {
+        const listContainer = document.getElementById('boostList');
+        const countEl = document.getElementById('boostCount');
+        const active = display.filter(d => d.timer > 0);
+        countEl.textContent = active.length ? `(${active.length})` : '';
+
+        if (!active.length) {
+            listContainer.innerHTML = '<div class="empty">暂无药水生效</div>';
+            return;
+        }
+
+        listContainer.innerHTML = active.map(d => {
+            const multStr = d.mult ? ` <span class="badge badge-boost">×${d.mult}</span>` : '';
+            return `
+                <div class="item">
+                    <div class="item-left">
+                        <div class="item-name">${esc(d.name)}${multStr}</div>
+                    </div>
+                    <div class="item-right">
+                        <div class="time-remaining">${formatTime(d.timer)}</div>
+                        <div class="time-finish">${getFinishDate(d.timer)}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
     }
 
     function renderSection(listId, countId, items, emptyText) {
@@ -493,7 +632,12 @@
 
             const badges =
                 (item.isBB ? '<span class="badge badge-bb">夜世界</span>' : '') +
-                (item.helper ? '<span class="badge badge-helper">帮手</span>' : '');
+                (item.helper ? '<span class="badge badge-helper">帮手</span>' : '') +
+                (item.boostName ? `<span class="badge badge-boost">⚡${item.boostName}</span>` : '');
+
+            const accStr = item.accTimer != null
+                ? `<div class="time-accelerated">⚡ ${formatTime(item.accTimer)}（${getFinishDate(item.accTimer)}）</div>`
+                : '';
 
             return `
                 <div class="item">
@@ -504,6 +648,7 @@
                     <div class="item-right">
                         <div class="time-remaining">${remainStr}</div>
                         <div class="time-finish">${finishStr}</div>
+                        ${accStr}
                     </div>
                 </div>
             `;
@@ -511,6 +656,43 @@
     }
 
     document.getElementById('parseBtn').addEventListener('click', parseJSON);
+
+    // 📋 读取剪贴板并解析（需要 HTTPS 或 localhost 环境，如 GitHub Pages）
+    document.getElementById('clipboardBtn').addEventListener('click', async () => {
+        const statusMsg = document.getElementById('statusMsg');
+        if (navigator.clipboard && navigator.clipboard.readText) {
+            try {
+                const text = (await navigator.clipboard.readText()).trim();
+                if (!text) {
+                    statusMsg.textContent = '剪贴板是空的，请先复制导出的 JSON';
+                    return;
+                }
+                document.getElementById('jsonInput').value = text;
+                parseJSON();
+            } catch (e) {
+                statusMsg.textContent = '无法读取剪贴板（未授权或环境不支持），请长按输入框粘贴，粘贴后会自动解析';
+            }
+        } else {
+            statusMsg.textContent = '当前浏览器不支持读取剪贴板，请长按输入框粘贴，粘贴后会自动解析';
+        }
+    });
+
+    // 🗑️ 清空：输入框 + 板块 + 状态复位
+    document.getElementById('clearBtn').addEventListener('click', () => {
+        document.getElementById('jsonInput').value = '';
+        document.getElementById('statusMsg').textContent = '等待输入...';
+        document.getElementById('workerCount').textContent = '';
+        document.getElementById('labCount').textContent = '';
+        document.getElementById('boostCount').textContent = '';
+        document.getElementById('workerList').innerHTML = '<div class="empty">暂无工人升级项目</div>';
+        document.getElementById('labList').innerHTML = '<div class="empty">暂无实验室研究项目</div>';
+        document.getElementById('boostList').innerHTML = '<div class="empty">暂无药水生效</div>';
+    });
+
+    // 粘贴即解析：粘贴内容进入输入框后自动执行解析（剪贴板按钮的通用兜底）
+    document.getElementById('jsonInput').addEventListener('paste', () => {
+        setTimeout(() => { parseJSON(); }, 120);
+    });
 </script>
 </body>
 </html>
