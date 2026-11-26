@@ -76,6 +76,26 @@
             color: #94a3b8;
             font-size: 0.9rem;
         }
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin: 0 0 10px;
+        }
+        .tabs .tab {
+            background: #334155;
+        }
+        .tabs .tab:hover {
+            background: #475569;
+        }
+        .tabs .tab.active {
+            background: #3b82f6;
+        }
+        .tabs .tab.active:hover {
+            background: #2563eb;
+        }
+        .world.hidden {
+            display: none;
+        }
         .list {
             display: flex;
             flex-direction: column;
@@ -140,10 +160,6 @@
             vertical-align: 1px;
             font-weight: 600;
         }
-        .badge-bb {
-            background: #1e3a5f;
-            color: #7dd3fc;
-        }
         .badge-helper {
             background: #3f2d12;
             color: #fbbf24;
@@ -179,25 +195,54 @@
     </div>
     <div class="status" id="statusMsg">等待输入...</div>
 
-    <h2>⚒️ 工人升级中 <span class="count" id="workerCount"></span></h2>
-    <div class="list" id="workerList">
-        <div class="empty">暂无工人升级项目</div>
+    <div class="tabs">
+        <button id="tabMain" class="tab active">主世界</button>
+        <button id="tabBB" class="tab">🌙 夜世界</button>
     </div>
 
-    <h2>🧪 实验室研究 <span class="count" id="labCount"></span></h2>
-    <div class="list" id="labList">
-        <div class="empty">暂无实验室研究项目</div>
+    <div class="world" id="worldMain">
+        <h2>⚒️ 工人升级中 <span class="count" id="workerCount"></span></h2>
+        <div class="list" id="workerList">
+            <div class="empty">暂无工人升级项目</div>
+        </div>
+
+        <h2>🐾 战宠研究室 <span class="count" id="petCount"></span></h2>
+        <div class="list" id="petList">
+            <div class="empty">暂无战宠研究项目</div>
+        </div>
+
+        <h2>🧪 实验室研究 <span class="count" id="labCount"></span></h2>
+        <div class="list" id="labList">
+            <div class="empty">暂无实验室研究项目</div>
+        </div>
+
+        <h2>⏳ 药水加速 <span class="count" id="boostCount"></span></h2>
+        <div class="list" id="boostList">
+            <div class="empty">暂无药水生效</div>
+        </div>
     </div>
 
-    <h2>⏳ 药水加速 <span class="count" id="boostCount"></span></h2>
-    <div class="list" id="boostList">
-        <div class="empty">暂无药水生效</div>
+    <div class="world hidden" id="worldBB">
+        <h2>🌙 ⚒️ 工人升级中 <span class="count" id="workerBBCount"></span></h2>
+        <div class="list" id="workerBBList">
+            <div class="empty">夜世界暂无工人升级项目</div>
+        </div>
+
+        <h2>🌙 🧪 实验室研究 <span class="count" id="labBBCount"></span></h2>
+        <div class="list" id="labBBList">
+            <div class="empty">夜世界暂无实验室研究项目</div>
+        </div>
+
+        <h2>🌙 ⏳ 药水加速 <span class="count" id="boostBBCount"></span></h2>
+        <div class="list" id="boostBBList">
+            <div class="empty">夜世界暂无药水生效</div>
+        </div>
     </div>
 
     <div class="note">
         名称映射依据官方游戏数据 (buildings / characters / heroes / pets / spells CSV 的类型序号 + texts.csv 官方中文译名)。
         2024 年后新增、暂无公开数据对照的 ID 会显示为「类型 #ID」，如名称有误请按 ID 告知即可补正。
-        蓝色「夜世界」标记 = 建筑大师基地项目；黄色「帮手」标记 = 帮手周期性升级 (helper_recurrent)。
+        主世界与夜世界（建筑大师基地）分 tab 显示：主世界在左且为默认；时钟药水展示在夜世界 tab；黄色「帮手」标记 = 帮手周期性升级 (helper_recurrent)。
         药水加速：工人药水 ×10、研究药水 ×24、战宠药水 ×24（官方 globals.csv 倍率），受影响项目会显示绿色 ⚡ 加速后倒计时；
         药水 ID 目前按官方 boosters.csv 序号推定，若显示「药水 #ID」请把实际 JSON 发我核对修正。
     </div>
@@ -289,7 +334,8 @@
         28000003: '战争机器',
         28000004: '飞盾战神',
         28000005: '战争直升机',
-        // 28000006：2024 后新增的第 5 个主世界英雄，无公开数据 → 显示 英雄 #ID
+        28000006: '亡灵王子',
+        28000007: '飞龙公爵',
 
         // 宠物（pets.csv，TID_PET_SPIRIT_FOX = 灵狐已与导出 JSON 核对）
         73000000: '莱希',
@@ -443,12 +489,13 @@
     // 倍率来自官方 globals.csv：
     //   BOOSTER_BUILDERS_SPEEDUP=10 / BOOSTER_LABORATORY_SPEEDUP=24 / BOOSTER_PET_SHOP_SPEEDUP=24
     // scope: builder=加速工人板块(主世界) / lab=加速实验室(主世界) / pet=加速宠物 / none=仅展示
+    // world: main=主世界 tab 展示 / bb=夜世界 tab 展示（时钟药水为夜世界专属）
     const BOOST_MAP = {
         86000005: { name: '力量药水', scope: 'none', mult: 0 },
         86000006: { name: '资源药水', scope: 'none', mult: 0 },
         86000007: { name: '训练药水', scope: 'none', mult: 0 },
         86000014: { name: '工人药水', scope: 'builder', mult: 10 },
-        86000019: { name: '时钟药水', scope: 'none', mult: 0 },
+        86000019: { name: '时钟药水', scope: 'none', mult: 0, world: 'bb' },
         86000021: { name: '英雄药水', scope: 'none', mult: 0 },
         86000022: { name: '研究药水', scope: 'lab', mult: 24 },
         86000023: { name: '超级兵药水', scope: 'none', mult: 0 },
@@ -470,9 +517,9 @@
             const info = BOOST_MAP[id];
             if (info) {
                 if (info.scope !== 'none' && t > 0) secs[info.scope] += t;
-                display.push({ id: id, name: info.name, timer: t, mult: info.mult, scope: info.scope });
+                display.push({ id: id, name: info.name, timer: t, mult: info.mult, scope: info.scope, world: info.world || 'main' });
             } else {
-                display.push({ id: id, name: `药水 #${id}`, timer: t, mult: 0, scope: 'none' });
+                display.push({ id: id, name: `药水 #${id}`, timer: t, mult: 0, scope: 'none', world: 'main' });
             }
         });
         return { secs, display };
@@ -487,8 +534,10 @@
 
     // ===== 解析主流程 =====
 
-    // 工人板块：buildings / buildings2 / heroes / heroes2 / pets
+    // 工人板块：buildings / buildings2 / heroes / heroes2
+    // 战宠板块：pets（宠物研究在战宠研究室进行，不占建筑工人）
     // 实验室板块：units / units2 / spells
+    // 第 3 列为世界归属（false=主世界 / true=夜世界），解析结果按世界拆分到各自的 tab 板块
     // 第 4 列为药水作用范围：builder=工人药水 / lab=研究药水 / pet=战宠药水 / none=不受这三种药水影响
     const SOURCES = [
         // [字段名, 板块, 是否夜世界, 药水范围]
@@ -496,7 +545,7 @@
         ['buildings2', 'worker', true, 'none'],
         ['heroes', 'worker', false, 'builder'],
         ['heroes2', 'worker', true, 'none'],
-        ['pets', 'worker', false, 'pet'],
+        ['pets', 'pet', false, 'pet'],
         ['units', 'lab', false, 'lab'],
         ['units2', 'lab', true, 'none'],
         ['spells', 'lab', false, 'lab']
@@ -522,19 +571,23 @@
             return;
         }
 
-        const workerItems = [];
-        const labItems = [];
+        // 按世界拆分：主世界 / 夜世界各一套工人 + 实验室列表；战宠仅主世界，单独成板块
+        const workerMain = [], workerBB = [];
+        const petItems = [];
+        const labMain = [], labBB = [];
 
         SOURCES.forEach(([field, section, isBB, scope]) => {
             const arr = data[field];
             if (!Array.isArray(arr)) return;
             arr.forEach(item => {
                 if (item && item.timer && item.timer > 0) {
-                    (section === 'worker' ? workerItems : labItems).push({
+                    const target = section === 'worker'
+                        ? (isBB ? workerBB : workerMain)
+                        : (section === 'pet' ? petItems : (isBB ? labBB : labMain));
+                    target.push({
                         id: item.data,
                         lvl: item.lvl,
                         timer: item.timer,
-                        isBB: isBB,
                         helper: !!item.helper_recurrent,
                         scope: scope
                     });
@@ -548,7 +601,7 @@
         boosts.display.forEach(d => {
             if (d.scope !== 'none' && d.timer > 0) potionNameByScope[d.scope] = d.name;
         });
-        [workerItems, labItems].forEach(list => {
+        [workerMain, workerBB, petItems, labMain, labBB].forEach(list => {
             list.forEach(item => {
                 const potionSecs = boosts.secs[item.scope] || 0;
                 if (potionSecs > 0 && SCOPE_MULT[item.scope]) {
@@ -558,7 +611,7 @@
             });
         });
 
-        const total = workerItems.length + labItems.length;
+        const total = workerMain.length + workerBB.length + petItems.length + labMain.length + labBB.length;
         let potionSummary = '';
         if (boosts.display.length) {
             potionSummary = '；生效药水：' + boosts.display
@@ -571,27 +624,41 @@
         } else if (total === 0) {
             statusMsg.textContent = '未找到正在升级的项目' + potionSummary;
         } else {
-            statusMsg.textContent = `共找到 ${total} 个进行中的项目：工人 ${workerItems.length} 个，实验室 ${labItems.length} 个` + potionSummary;
+            statusMsg.textContent =
+                `主世界：工人 ${workerMain.length} 个，战宠 ${petItems.length} 个，实验室 ${labMain.length} 个` +
+                `；夜世界：工人 ${workerBB.length} 个，实验室 ${labBB.length} 个` + potionSummary;
         }
 
-        // 各板块按（加速后）剩余时间升序
-        workerItems.sort((a, b) => (a.accTimer || a.timer) - (b.accTimer || b.timer));
-        labItems.sort((a, b) => (a.accTimer || a.timer) - (b.accTimer || b.timer));
+        // 各世界各板块按（加速后）剩余时间升序
+        const byRemain = (a, b) => (a.accTimer || a.timer) - (b.accTimer || b.timer);
+        workerMain.sort(byRemain);
+        workerBB.sort(byRemain);
+        petItems.sort(byRemain);
+        labMain.sort(byRemain);
+        labBB.sort(byRemain);
 
-        renderSection('workerList', 'workerCount', workerItems, '暂无工人升级项目');
-        renderSection('labList', 'labCount', labItems, '暂无实验室研究项目');
+        renderSection('workerList', 'workerCount', workerMain, '暂无工人升级项目');
+        renderSection('workerBBList', 'workerBBCount', workerBB, '夜世界暂无工人升级项目');
+        renderSection('petList', 'petCount', petItems, '暂无战宠研究项目');
+        renderSection('labList', 'labCount', labMain, '暂无实验室研究项目');
+        renderSection('labBBList', 'labBBCount', labBB, '夜世界暂无实验室研究项目');
         renderBoosts(boosts.display);
     }
 
-    // 药水板块
+    // 药水板块：按世界拆分渲染（时钟药水→夜世界 tab，其余→主世界 tab）
     function renderBoosts(display) {
-        const listContainer = document.getElementById('boostList');
-        const countEl = document.getElementById('boostCount');
         const active = display.filter(d => d.timer > 0);
+        renderBoostList('boostList', 'boostCount', active.filter(d => d.world !== 'bb'), '暂无药水生效');
+        renderBoostList('boostBBList', 'boostBBCount', active.filter(d => d.world === 'bb'), '夜世界暂无药水生效');
+    }
+
+    function renderBoostList(listId, countId, active, emptyText) {
+        const listContainer = document.getElementById(listId);
+        const countEl = document.getElementById(countId);
         countEl.textContent = active.length ? `(${active.length})` : '';
 
         if (!active.length) {
-            listContainer.innerHTML = '<div class="empty">暂无药水生效</div>';
+            listContainer.innerHTML = `<div class="empty">${emptyText}</div>`;
             return;
         }
 
@@ -631,7 +698,6 @@
                 : '';
 
             const badges =
-                (item.isBB ? '<span class="badge badge-bb">夜世界</span>' : '') +
                 (item.helper ? '<span class="badge badge-helper">帮手</span>' : '') +
                 (item.boostName ? `<span class="badge badge-boost">⚡${item.boostName}</span>` : '');
 
@@ -657,6 +723,16 @@
 
     document.getElementById('parseBtn').addEventListener('click', parseJSON);
 
+    // 🗺️ tab 切换：主世界（默认） / 夜世界
+    function switchWorld(isBB) {
+        document.getElementById('worldMain').classList.toggle('hidden', isBB);
+        document.getElementById('worldBB').classList.toggle('hidden', !isBB);
+        document.getElementById('tabMain').classList.toggle('active', !isBB);
+        document.getElementById('tabBB').classList.toggle('active', isBB);
+    }
+    document.getElementById('tabMain').addEventListener('click', () => switchWorld(false));
+    document.getElementById('tabBB').addEventListener('click', () => switchWorld(true));
+
     // 📋 读取剪贴板并解析（需要 HTTPS 或 localhost 环境，如 GitHub Pages）
     document.getElementById('clipboardBtn').addEventListener('click', async () => {
         const statusMsg = document.getElementById('statusMsg');
@@ -670,23 +746,27 @@
                 document.getElementById('jsonInput').value = text;
                 parseJSON();
             } catch (e) {
-                statusMsg.textContent = '无法读取剪贴板（未授权或环境不支持），请长按输入框粘贴，粘贴后会自动解析';
+                statusMsg.textContent = '无法读取剪贴板：自动读取需 HTTPS 或 localhost 环境（如 GitHub Pages）且授权后可用；本地打开请长按输入框粘贴，粘贴后会自动解析';
             }
         } else {
             statusMsg.textContent = '当前浏览器不支持读取剪贴板，请长按输入框粘贴，粘贴后会自动解析';
         }
     });
 
-    // 🗑️ 清空：输入框 + 板块 + 状态复位
+    // 🗑️ 清空：输入框 + 两套世界板块 + tab 复位到主世界
     document.getElementById('clearBtn').addEventListener('click', () => {
         document.getElementById('jsonInput').value = '';
         document.getElementById('statusMsg').textContent = '等待输入...';
-        document.getElementById('workerCount').textContent = '';
-        document.getElementById('labCount').textContent = '';
-        document.getElementById('boostCount').textContent = '';
+        ['workerCount', 'petCount', 'labCount', 'boostCount', 'workerBBCount', 'labBBCount', 'boostBBCount']
+            .forEach(id => { document.getElementById(id).textContent = ''; });
         document.getElementById('workerList').innerHTML = '<div class="empty">暂无工人升级项目</div>';
+        document.getElementById('petList').innerHTML = '<div class="empty">暂无战宠研究项目</div>';
         document.getElementById('labList').innerHTML = '<div class="empty">暂无实验室研究项目</div>';
         document.getElementById('boostList').innerHTML = '<div class="empty">暂无药水生效</div>';
+        document.getElementById('workerBBList').innerHTML = '<div class="empty">夜世界暂无工人升级项目</div>';
+        document.getElementById('labBBList').innerHTML = '<div class="empty">夜世界暂无实验室研究项目</div>';
+        document.getElementById('boostBBList').innerHTML = '<div class="empty">夜世界暂无药水生效</div>';
+        switchWorld(false);
     });
 
     // 粘贴即解析：粘贴内容进入输入框后自动执行解析（剪贴板按钮的通用兜底）
